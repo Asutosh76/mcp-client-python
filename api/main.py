@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
-
+from contextlib import asynccontextmanager
 from client.mcp_client import MCPClient
 
 load_dotenv()
@@ -14,7 +14,8 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-async def lifespan(app):
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     client = MCPClient()
     try:
         connected = await client.connect_to_server(settings.server_script_path)
@@ -22,10 +23,12 @@ async def lifespan(app):
             raise HTTPException(status_code=500, detail="Failed to connect to MCP server")
         
         app.state.mcp_client = client
+        yield
     except Exception as e:
         client.logger.error(f"Error during MCPClient lifespan: {e}")
-        raise
+        raise HTTPException(status_code=500, detail="Error during lifespan") from e
     finally:
+        # Cleanup resources shutting down
         await client.cleanup()
 
 
@@ -43,6 +46,7 @@ app.add_middleware(
 
 class QueryRequest(BaseModel):
     query: str
+
 class Message(BaseModel):
     role: str
     content: Any
@@ -50,3 +54,15 @@ class Message(BaseModel):
 class ToolCall(BaseModel):
     name: str
     arguments: Dict[str, Any]
+
+
+@app.post("/process_query")
+async def process_query(request: QueryRequest):
+    "process a query and return a response"
+    try:
+        messages = []
+        messages = await app.state.client.process_query(request.query)
+        return {"messages": messages}
+    except Exception as e:
+        app.state.mcp_client.logger.error(f"Error processing query: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

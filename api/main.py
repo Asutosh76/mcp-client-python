@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
 from contextlib import asynccontextmanager
 from client.mcp_client import MCPClient
+import asyncio
 
 load_dotenv()
 
@@ -18,7 +19,7 @@ settings = Settings()
 async def lifespan(app: FastAPI):
     client = MCPClient()
     try:
-        connected = await client.connect_to_server(settings.server_script_path)
+        connected = await client.client(settings.server_script_path)
         if not connected:
             raise HTTPException(status_code=500, detail="Failed to connect to MCP server")
         
@@ -61,8 +62,13 @@ async def process_query(request: QueryRequest):
     "process a query and return a response"
     try:
         messages = []
-        messages = await app.state.client.process_query(request.query)
+        messages = await app.state.mcp_client.process_query(request.query)
         return {"messages": messages}
     except Exception as e:
         app.state.mcp_client.logger.error(f"Error processing query: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
